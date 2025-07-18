@@ -9,9 +9,9 @@ struct LoginView: View {
     @State private var isLoading = false
     @State private var showPassword = false
     @State private var errorMessage = ""
-    @State private var isLoggedIn = false
-    @State private var usernameError = ""
-    @State private var passwordError = ""
+    @State private var showingForgotPassword = false
+    @State private var loginSuccess = false
+    
     @FocusState private var focusedField: Field?
     
     enum Field: Hashable {
@@ -20,126 +20,145 @@ struct LoginView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header
-                    VStack(spacing: 16) {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 80))
-                            .foregroundColor(.blue)
-                            .accessibilityLabel("Login icon")
-                        
-                        Text("Welcome Back")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .accessibilityAddTraits(.isHeader)
-                        
-                        Text("Sign in to your account")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.top, 40)
-                    
-                    // Form
-                    VStack(spacing: 16) {
-                        // Username Field
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextField("Email or Username", text: $username)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.emailAddress)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .username)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(usernameError.isEmpty ? Color.clear : Color.red, lineWidth: 1)
-                                )
-                                .accessibilityLabel("Username or email input")
-                                .accessibilityHint("Enter your email address or username")
-                                .onChange(of: username) { _ in
-                                    validateUsername()
-                                }
-                                .onSubmit {
-                                    focusedField = .password
-                                }
+            ZStack {
+                // Background gradient
+                LinearGradient(
+                    gradient: Gradient(colors: [Color.blue.opacity(0.6), Color.purple.opacity(0.6)]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 30) {
+                        // Logo/Header
+                        VStack(spacing: 20) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 80))
+                                .foregroundColor(.white)
+                                .accessibility(label: Text("App Logo"))
                             
-                            if !usernameError.isEmpty {
-                                Text(usernameError)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                                    .accessibilityLabel("Username error: \(usernameError)")
-                            }
+                            Text("Welcome Back")
+                                .font(.title)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .accessibility(addTraits: .isHeader)
+                            
+                            Text("Sign in to your account")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.8))
                         }
+                        .padding(.top, 40)
                         
-                        // Password Field
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Group {
+                        // Login Form
+                        VStack(spacing: 20) {
+                            // Username Field
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "envelope")
+                                        .foregroundColor(.gray)
+                                        .frame(width: 20)
+                                    
+                                    TextField("Email or Username", text: $username)
+                                        .textInputAutocapitalization(.never)
+                                        .keyboardType(.emailAddress)
+                                        .autocorrectionDisabled()
+                                        .focused($focusedField, equals: .username)
+                                        .onSubmit {
+                                            focusedField = .password
+                                        }
+                                        .accessibility(label: Text("Email or Username"))
+                                        .accessibility(hint: Text("Enter your email address or username"))
+                                }
+                                .padding()
+                                .background(Color.white)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(usernameValidationColor, lineWidth: 2)
+                                )
+                                
+                                if !username.isEmpty && !isValidUsername {
+                                    Text("Please enter a valid email address")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                        .accessibility(label: Text("Username validation error"))
+                                }
+                            }
+                            
+                            // Password Field
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "lock")
+                                        .foregroundColor(.gray)
+                                        .frame(width: 20)
+                                    
                                     if showPassword {
                                         TextField("Password", text: $password)
+                                            .focused($focusedField, equals: .password)
+                                            .onSubmit {
+                                                login()
+                                            }
                                     } else {
                                         SecureField("Password", text: $password)
+                                            .focused($focusedField, equals: .password)
+                                            .onSubmit {
+                                                login()
+                                            }
                                     }
+                                    
+                                    Button(action: {
+                                        showPassword.toggle()
+                                    }) {
+                                        Image(systemName: showPassword ? "eye.slash" : "eye")
+                                            .foregroundColor(.gray)
+                                    }
+                                    .accessibility(label: Text(showPassword ? "Hide password" : "Show password"))
                                 }
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .focused($focusedField, equals: .password)
+                                .padding()
+                                .background(Color.white)
+                                .cornerRadius(12)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(passwordError.isEmpty ? Color.clear : Color.red, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(passwordValidationColor, lineWidth: 2)
                                 )
-                                .accessibilityLabel("Password input")
-                                .accessibilityHint("Enter your password")
-                                .onChange(of: password) { _ in
-                                    validatePassword()
-                                }
-                                .onSubmit {
-                                    if isFormValid {
-                                        login()
-                                    }
-                                }
                                 
-                                Button(action: {
-                                    showPassword.toggle()
-                                }) {
-                                    Image(systemName: showPassword ? "eye.slash" : "eye")
-                                        .foregroundColor(.secondary)
+                                if !password.isEmpty && !isValidPassword {
+                                    Text("Password must be at least 6 characters")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                        .accessibility(label: Text("Password validation error"))
                                 }
-                                .accessibilityLabel(showPassword ? "Hide password" : "Show password")
-                                .padding(.trailing, 8)
                             }
                             
-                            if !passwordError.isEmpty {
-                                Text(passwordError)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                                    .accessibilityLabel("Password error: \(passwordError)")
+                            // Remember Me Toggle
+                            HStack {
+                                Toggle("Remember Me", isOn: $rememberMe)
+                                    .toggleStyle(CheckboxToggleStyle())
+                                    .accessibility(label: Text("Remember Me"))
+                                    .accessibility(hint: Text("Keep me signed in on this device"))
+                                
+                                Spacer()
+                                
+                                Button("Forgot Password?") {
+                                    showingForgotPassword = true
+                                }
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                                .accessibility(label: Text("Forgot Password"))
+                                .accessibility(hint: Text("Reset your password"))
                             }
                         }
-                        
-                        // Remember Me Toggle
-                        HStack {
-                            Toggle("Remember Me", isOn: $rememberMe)
-                                .accessibilityLabel("Remember me toggle")
-                                .accessibilityHint("Keep me signed in on this device")
-                            
-                            Spacer()
-                            
-                            Button("Forgot Password?") {
-                                handleForgotPassword()
-                            }
-                            .font(.body)
-                            .foregroundColor(.blue)
-                            .accessibilityLabel("Forgot password")
-                            .accessibilityHint("Reset your password")
-                        }
+                        .padding(.horizontal, 30)
                         
                         // Error Message
                         if !errorMessage.isEmpty {
                             Text(errorMessage)
-                                .font(.body)
+                                .font(.subheadline)
                                 .foregroundColor(.red)
+                                .padding(.horizontal, 30)
                                 .multilineTextAlignment(.center)
-                                .accessibilityLabel("Error message: \(errorMessage)")
+                                .accessibility(label: Text("Error: \(errorMessage)"))
                         }
                         
                         // Login Button
@@ -149,139 +168,275 @@ struct LoginView: View {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                         .scaleEffect(0.8)
-                                        .accessibilityLabel("Signing in")
+                                        .accessibility(label: Text("Signing in"))
                                 } else {
                                     Text("Sign In")
-                                        .font(.headline)
-                                        .accessibilityLabel("Sign in button")
+                                        .fontWeight(.semibold)
                                 }
                             }
                             .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(isFormValid && !isLoading ? Color.blue : Color.gray)
-                            .foregroundColor(.white)
+                            .frame(height: 50)
+                            .background(isFormValid ? Color.white : Color.gray.opacity(0.6))
+                            .foregroundColor(isFormValid ? .blue : .white)
                             .cornerRadius(12)
+                            .scaleEffect(isLoading ? 0.95 : 1.0)
                         }
                         .disabled(!isFormValid || isLoading)
-                        .accessibilityHint(isFormValid ? "Sign in to your account" : "Complete the form to sign in")
-                    }
-                    .padding(.horizontal, 24)
-                    
-                    // Sign Up Link
-                    HStack {
-                        Text("Don't have an account?")
-                            .foregroundColor(.secondary)
+                        .padding(.horizontal, 30)
+                        .accessibility(label: Text("Sign In Button"))
+                        .accessibility(hint: Text("Tap to sign in to your account"))
+                        .accessibility(addTraits: isFormValid ? [] : .isNotEnabled)
                         
-                        Button("Sign Up") {
-                            handleSignUp()
+                        // Success Animation
+                        if loginSuccess {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.title2)
+                                Text("Login Successful!")
+                                    .foregroundColor(.white)
+                                    .fontWeight(.medium)
+                            }
+                            .padding()
+                            .background(Color.black.opacity(0.3))
+                            .cornerRadius(12)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibility(label: Text("Login successful"))
                         }
-                        .foregroundColor(.blue)
-                        .accessibilityLabel("Sign up")
-                        .accessibilityHint("Create a new account")
+                        
+                        Spacer()
                     }
-                    .padding(.top, 20)
-                    
-                    Spacer()
                 }
             }
-            .navigationTitle("Login")
-            .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(true)
+            .onTapGesture {
+                focusedField = nil
+            }
+            .sheet(isPresented: $showingForgotPassword) {
+                ForgotPasswordView()
+            }
+            .onChange(of: username) { _ in
+                clearErrorMessage()
+            }
+            .onChange(of: password) { _ in
+                clearErrorMessage()
+            }
         }
-        .onTapGesture {
-            hideKeyboard()
-        }
-        .fullScreenCover(isPresented: $isLoggedIn) {
-            Text("Welcome! You are now logged in.")
-                .font(.title)
-                .padding()
-                .accessibilityLabel("Login successful")
-        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var isValidUsername: Bool {
+        let emailRegex = #"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"#
+        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
+        return emailPredicate.evaluate(with: username) || (!username.isEmpty && username.count >= 3)
+    }
+    
+    private var isValidPassword: Bool {
+        return password.count >= 6
     }
     
     private var isFormValid: Bool {
-        return !username.isEmpty && 
-               !password.isEmpty && 
-               usernameError.isEmpty && 
-               passwordError.isEmpty &&
-               isValidEmail(username) &&
-               password.count >= 6
+        return isValidUsername && isValidPassword && !username.isEmpty && !password.isEmpty
     }
     
-    private func validateUsername() {
-        usernameError = ""
-        
+    private var usernameValidationColor: Color {
         if username.isEmpty {
-            usernameError = "Username is required"
-        } else if !isValidEmail(username) && username.count < 3 {
-            usernameError = "Please enter a valid email or username (3+ characters)"
+            return .clear
         }
+        return isValidUsername ? .green : .red
     }
     
-    private func validatePassword() {
-        passwordError = ""
-        
+    private var passwordValidationColor: Color {
         if password.isEmpty {
-            passwordError = "Password is required"
-        } else if password.count < 6 {
-            passwordError = "Password must be at least 6 characters"
+            return .clear
         }
+        return isValidPassword ? .green : .red
     }
     
-    private func isValidEmail(_ email: String) -> Bool {
-        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
-        return emailPredicate.evaluate(with: email)
-    }
+    // MARK: - Methods
     
     private func login() {
         guard isFormValid else { return }
         
         isLoading = true
         errorMessage = ""
-        hideKeyboard()
+        focusedField = nil
         
-        // Simulate API call
+        // Simulate network request
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            isLoading = false
-            
-            // Simulate different scenarios
-            if username.lowercased() == "error@test.com" {
-                errorMessage = "Invalid credentials. Please check your email and password."
-            } else if username.lowercased() == "locked@test.com" {
-                errorMessage = "Account is temporarily locked. Please try again later."
-            } else if username.lowercased() == "network@test.com" {
-                errorMessage = "Network error. Please check your connection and try again."
-            } else {
-                // Successful login
-                isLoggedIn = true
+            // Simulate login logic
+            if username.lowercased() == "demo@example.com" && password == "password123" {
+                // Success
+                loginSuccess = true
+                isLoading = false
                 
-                // Save credentials if remember me is enabled
-                if rememberMe {
-                    UserDefaults.standard.set(username, forKey: "savedUsername")
-                    UserDefaults.standard.set(true, forKey: "rememberMe")
+                // Hide success message and navigate
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    // Navigate to main app or handle success
+                    loginSuccess = false
+                }
+            } else {
+                // Failure
+                isLoading = false
+                errorMessage = "Invalid credentials. Please try again."
+                
+                // Add haptic feedback
+                let impact = UIImpactFeedbackGenerator(style: .medium)
+                impact.impactOccurred()
+            }
+        }
+    }
+    
+    private func clearErrorMessage() {
+        if !errorMessage.isEmpty {
+            errorMessage = ""
+        }
+    }
+}
+
+// MARK: - Custom Toggle Style
+
+struct CheckboxToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                .foregroundColor(configuration.isOn ? .white : .white.opacity(0.7))
+                .font(.system(size: 16))
+                .onTapGesture {
+                    configuration.isOn.toggle()
+                }
+            
+            configuration.label
+                .foregroundColor(.white)
+                .font(.subheadline)
+        }
+    }
+}
+
+// MARK: - Forgot Password View
+
+struct ForgotPasswordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var isLoading = false
+    @State private var showingSuccess = false
+    @State private var errorMessage = ""
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 30) {
+                VStack(spacing: 20) {
+                    Image(systemName: "envelope.circle.fill")
+                        .font(.system(size: 60))
+                        .foregroundColor(.blue)
+                    
+                    Text("Forgot Password")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("Enter your email address and we'll send you a link to reset your password.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 40)
+                
+                VStack(spacing: 20) {
+                    HStack {
+                        Image(systemName: "envelope")
+                            .foregroundColor(.gray)
+                            .frame(width: 20)
+                        
+                        TextField("Email Address", text: $email)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .autocorrectionDisabled()
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                    
+                    if !errorMessage.isEmpty {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    
+                    Button(action: sendResetLink) {
+                        HStack {
+                            if isLoading {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            } else {
+                                Text("Send Reset Link")
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(isValidEmail ? Color.blue : Color.gray.opacity(0.6))
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
+                    }
+                    .disabled(!isValidEmail || isLoading)
+                    
+                    if showingSuccess {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Reset link sent to your email!")
+                                .foregroundColor(.green)
+                                .fontWeight(.medium)
+                        }
+                        .padding()
+                        .background(Color.green.opacity(0.1))
+                        .cornerRadius(12)
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .padding(.horizontal, 30)
+                
+                Spacer()
+            }
+            .navigationTitle("Reset Password")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
                 }
             }
         }
     }
     
-    private func handleForgotPassword() {
-        // Handle forgot password action
-        print("Forgot password tapped")
+    private var isValidEmail: Bool {
+        let emailRegex = #"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"#
+        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
+        return emailPredicate.evaluate(with: email)
     }
     
-    private func handleSignUp() {
-        // Handle sign up action
-        print("Sign up tapped")
-    }
-    
-    private func hideKeyboard() {
-        focusedField = nil
+    private func sendResetLink() {
+        guard isValidEmail else { return }
+        
+        isLoading = true
+        errorMessage = ""
+        
+        // Simulate network request
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            isLoading = false
+            showingSuccess = true
+            
+            // Auto dismiss after success
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                dismiss()
+            }
+        }
     }
 }
 
-struct LoginView_Previews: PreviewProvider {
-    static var previews: some View {
-        LoginView()
-    }
+#Preview {
+    LoginView()
 }
