@@ -4,7 +4,7 @@ import SwiftUI
 import Foundation
 
 struct Message: Identifiable, Codable {
-    let id = UUID()
+    let id: UUID
     let content: String
     let senderID: String
     let senderName: String
@@ -12,9 +12,22 @@ struct Message: Identifiable, Codable {
     let type: MessageType
     let status: MessageStatus
     let replyToID: UUID?
+    let reactions: [String: Int]
     
     var isFromCurrentUser: Bool {
         senderID == "current_user"
+    }
+    
+    init(content: String, senderID: String, senderName: String, type: MessageType = .text, replyToID: UUID? = nil) {
+        self.id = UUID()
+        self.content = content
+        self.senderID = senderID
+        self.senderName = senderName
+        self.timestamp = Date()
+        self.type = type
+        self.status = .sent
+        self.replyToID = replyToID
+        self.reactions = [:]
     }
 }
 
@@ -31,39 +44,29 @@ enum MessageStatus: String, Codable {
     case read
 }
 
-struct User: Identifiable, Codable {
-    let id = UUID()
-    let name: String
-    let avatarURL: String?
-}
-
-struct Chat: Identifiable, Codable {
-    let id = UUID()
-    let participants: [User]
-    let messages: [Message]
-    let lastMessage: Message?
-    let isTyping: [String: Bool]
-    let createdAt: Date
-    let updatedAt: Date
-}
-
 enum ConnectionStatus {
     case connected
-    case disconnected
     case connecting
+    case disconnected
+}
+
+struct User: Identifiable, Codable {
+    let id: String
+    let name: String
+    let avatar: String
+    let isOnline: Bool
 }
 
 class ChatManager: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isTyping: [String: Bool] = [:]
-    @Published var connectionStatus: ConnectionStatus = .disconnected
-    @Published var typingUsers: Set<String> = []
+    @Published var connectionStatus: ConnectionStatus = .connected
+    @Published var onlineUsers: [User] = []
     
-    private var webSocket: URLSessionWebSocketTask?
     private var typingTimer: Timer?
     
     init() {
-        loadMockMessages()
+        loadSampleData()
     }
     
     func connect() {
@@ -75,97 +78,91 @@ class ChatManager: ObservableObject {
     
     func disconnect() {
         connectionStatus = .disconnected
-        webSocket?.cancel()
+        typingTimer?.invalidate()
     }
     
-    func sendMessage(_ content: String, replyToID: UUID? = nil) {
-        let message = Message(
-            content: content,
-            senderID: "current_user",
-            senderName: "You",
-            timestamp: Date(),
-            type: .text,
-            status: .sending,
-            replyToID: replyToID
-        )
-        
+    func sendMessage(_ message: Message) {
         messages.append(message)
-        
-        // Simulate delivery
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let index = self.messages.firstIndex(where: { $0.id == message.id }) {
-                self.messages[index] = Message(
-                    content: message.content,
-                    senderID: message.senderID,
-                    senderName: message.senderName,
-                    timestamp: message.timestamp,
-                    type: message.type,
-                    status: .delivered,
-                    replyToID: message.replyToID
-                )
-            }
-        }
+        simulateTypingStop()
     }
     
     func sendTypingIndicator(isTyping: Bool) {
         if isTyping {
-            typingUsers.insert("other_user")
-            typingTimer?.invalidate()
-            typingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
-                self.typingUsers.remove("other_user")
-            }
+            simulateTypingStart()
         } else {
-            typingUsers.remove("other_user")
+            simulateTypingStop()
         }
     }
     
-    private func loadMockMessages() {
-        messages = [
-            Message(
-                content: "Hey! How's your day going?",
-                senderID: "other_user",
-                senderName: "Alice",
-                timestamp: Date().addingTimeInterval(-3600),
-                type: .text,
-                status: .read,
-                replyToID: nil
-            ),
-            Message(
-                content: "Pretty good! Just working on some new features. How about you?",
-                senderID: "current_user",
-                senderName: "You",
-                timestamp: Date().addingTimeInterval(-3500),
-                type: .text,
-                status: .read,
-                replyToID: nil
-            ),
-            Message(
-                content: "Same here! This new chat interface is looking great 🎉",
-                senderID: "other_user",
-                senderName: "Alice",
-                timestamp: Date().addingTimeInterval(-3400),
-                type: .text,
-                status: .read,
-                replyToID: nil
-            ),
-            Message(
-                content: "Thanks! I'm really excited about the real-time features",
-                senderID: "current_user",
-                senderName: "You",
-                timestamp: Date().addingTimeInterval(-3300),
-                type: .text,
-                status: .read,
-                replyToID: nil
-            ),
-            Message(
-                content: "The typing indicators work perfectly! ✨",
-                senderID: "other_user",
-                senderName: "Alice",
-                timestamp: Date().addingTimeInterval(-300),
-                type: .text,
-                status: .read,
-                replyToID: nil
+    func addReaction(to messageID: UUID, emoji: String) {
+        if let index = messages.firstIndex(where: { $0.id == messageID }) {
+            var updatedMessage = messages[index]
+            var reactions = updatedMessage.reactions
+            reactions[emoji] = (reactions[emoji] ?? 0) + 1
+            
+            let newMessage = Message(
+                content: updatedMessage.content,
+                senderID: updatedMessage.senderID,
+                senderName: updatedMessage.senderName,
+                type: updatedMessage.type,
+                replyToID: updatedMessage.replyToID
             )
+            
+            messages[index] = newMessage
+        }
+    }
+    
+    private func simulateTypingStart() {
+        isTyping["other_user"] = true
+        
+        typingTimer?.invalidate()
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+            self.simulateTypingStop()
+            self.simulateIncomingMessage()
+        }
+    }
+    
+    private func simulateTypingStop() {
+        isTyping["other_user"] = false
+        typingTimer?.invalidate()
+    }
+    
+    private func simulateIncomingMessage() {
+        let responses = [
+            "That's interesting!",
+            "I agree with that.",
+            "Thanks for sharing!",
+            "Let me think about that.",
+            "Good point!",
+            "I see what you mean."
+        ]
+        
+        let randomResponse = responses.randomElement() ?? "Thanks!"
+        let incomingMessage = Message(
+            content: randomResponse,
+            senderID: "other_user",
+            senderName: "Assistant"
+        )
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.messages.append(incomingMessage)
+        }
+    }
+    
+    private func loadSampleData() {
+        let sampleMessages = [
+            Message(content: "Hello! How are you doing today?", senderID: "current_user", senderName: "You"),
+            Message(content: "I'm doing great, thanks for asking! How about you?", senderID: "other_user", senderName: "Assistant"),
+            Message(content: "I'm doing well! Just working on some SwiftUI projects.", senderID: "current_user", senderName: "You"),
+            Message(content: "That sounds exciting! SwiftUI is such a powerful framework.", senderID: "other_user", senderName: "Assistant"),
+            Message(content: "Absolutely! The declarative syntax makes UI development so much more intuitive.", senderID: "current_user", senderName: "You")
+        ]
+        
+        messages = sampleMessages
+        
+        onlineUsers = [
+            User(id: "current_user", name: "You", avatar: "person.circle.fill", isOnline: true),
+            User(id: "other_user", name: "Assistant", avatar: "person.circle.fill", isOnline: true)
         ]
     }
 }
@@ -174,53 +171,61 @@ struct MessageBubble: View {
     let message: Message
     let isFromCurrentUser: Bool
     let onReply: (Message) -> Void
+    let onReact: (UUID, String) -> Void
     
     @State private var showingReactions = false
-    @State private var reactions: [String: Int] = [:]
     
     var body: some View {
         HStack {
             if isFromCurrentUser {
-                Spacer()
+                Spacer(minLength: 60)
                 messageContent
                     .background(Color.blue)
                     .foregroundColor(.white)
-                    .contextMenu {
-                        Button("Reply") {
-                            onReply(message)
-                        }
-                        Button("Copy") {
-                            UIPasteboard.general.string = message.content
-                        }
-                    }
             } else {
                 messageContent
                     .background(Color.gray.opacity(0.2))
                     .foregroundColor(.primary)
-                    .contextMenu {
-                        Button("Reply") {
-                            onReply(message)
-                        }
-                        Button("Copy") {
-                            UIPasteboard.general.string = message.content
-                        }
-                    }
-                Spacer()
+                Spacer(minLength: 60)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(message.senderName) said \(message.content) at \(message.timestamp.formatted(.dateTime.hour().minute()))")
+        .contextMenu {
+            Button("Reply") {
+                onReply(message)
+            }
+            Button("React") {
+                showingReactions.toggle()
+            }
+            Button("Copy") {
+                UIPasteboard.general.string = message.content
+            }
+        }
+        .sheet(isPresented: $showingReactions) {
+            ReactionPicker { emoji in
+                onReact(message.id, emoji)
+                showingReactions = false
+            }
+        }
     }
     
     private var messageContent: some View {
         VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
             if !isFromCurrentUser {
-                Text(message.senderName)
-                    .font(.caption)
-                    .opacity(0.7)
+                HStack {
+                    Text(message.senderName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
+            
+            if let replyToID = message.replyToID {
+                ReplyIndicator(replyToID: replyToID)
                     .padding(.horizontal, 12)
-                    .padding(.top, 4)
             }
             
             Text(message.content)
@@ -228,47 +233,85 @@ struct MessageBubble: View {
                 .padding(.vertical, 8)
                 .multilineTextAlignment(isFromCurrentUser ? .trailing : .leading)
             
+            if !message.reactions.isEmpty {
+                MessageReactions(reactions: message.reactions) { emoji in
+                    onReact(message.id, emoji)
+                }
+                .padding(.horizontal, 12)
+            }
+            
             HStack {
-                if !reactions.isEmpty {
-                    MessageReactions(reactions: reactions) { emoji in
-                        addReaction(emoji)
-                    }
+                if isFromCurrentUser {
+                    Spacer()
                 }
                 
-                Spacer()
+                Text(message.timestamp.formatted(.dateTime.hour().minute()))
+                    .font(.caption2)
+                    .opacity(0.7)
                 
-                HStack(spacing: 4) {
-                    Text(message.timestamp.formatted(.dateTime.hour().minute()))
-                        .font(.caption2)
-                        .opacity(0.7)
-                    
-                    if isFromCurrentUser {
-                        Image(systemName: statusIcon)
-                            .font(.caption2)
-                            .opacity(0.7)
-                    }
+                if isFromCurrentUser {
+                    MessageStatusIcon(status: message.status)
+                }
+                
+                if !isFromCurrentUser {
+                    Spacer()
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
+            .padding(.bottom, 8)
         }
     }
+}
+
+struct MessageStatusIcon: View {
+    let status: MessageStatus
     
-    private var statusIcon: String {
-        switch message.status {
+    var body: some View {
+        switch status {
         case .sending:
-            return "clock"
+            Image(systemName: "clock")
+                .font(.caption2)
+                .opacity(0.7)
         case .sent:
-            return "checkmark"
+            Image(systemName: "checkmark")
+                .font(.caption2)
+                .opacity(0.7)
         case .delivered:
-            return "checkmark.circle"
+            Image(systemName: "checkmark.circle")
+                .font(.caption2)
+                .opacity(0.7)
         case .read:
-            return "checkmark.circle.fill"
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption2)
+                .foregroundColor(.blue)
         }
     }
+}
+
+struct ReplyIndicator: View {
+    let replyToID: UUID
     
-    private func addReaction(_ emoji: String) {
-        reactions[emoji, default: 0] += 1
+    var body: some View {
+        HStack {
+            Rectangle()
+                .fill(Color.blue)
+                .frame(width: 3)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Reply to message")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Text("Original message content...")
+                    .font(.caption)
+                    .lineLimit(2)
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .background(Color.gray.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -288,6 +331,33 @@ struct MessageReactions: View {
                         .clipShape(Capsule())
                 }
             }
+            
+            Spacer()
+        }
+    }
+}
+
+struct ReactionPicker: View {
+    let onReact: (String) -> Void
+    
+    private let reactions = ["❤️", "😂", "😮", "😢", "😠", "👍", "👎", "🎉"]
+    
+    var body: some View {
+        NavigationView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 20) {
+                ForEach(reactions, id: \.self) { emoji in
+                    Button(action: { onReact(emoji) }) {
+                        Text(emoji)
+                            .font(.largeTitle)
+                            .padding()
+                            .background(Color.gray.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                }
+            }
+            .padding()
+            .navigationTitle("React")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
@@ -298,7 +368,7 @@ struct ReplyPreview: View {
     
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Replying to \(originalMessage.senderName)")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -319,176 +389,202 @@ struct ReplyPreview: View {
         .padding()
         .background(Color.gray.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Replying to \(originalMessage.senderName): \(originalMessage.content)")
     }
 }
 
 struct TypingIndicator: View {
-    let typingUsers: Set<String>
     @State private var typingAnimation = false
     
     var body: some View {
         HStack {
-            if !typingUsers.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(0..<3) { index in
-                        Circle()
-                            .fill(Color.gray)
-                            .frame(width: 8, height: 8)
-                            .scaleEffect(typingAnimation ? 1.2 : 0.8)
-                            .animation(
-                                Animation.easeInOut(duration: 0.5)
-                                    .repeatForever()
-                                    .delay(Double(index) * 0.1),
-                                value: typingAnimation
-                            )
-                    }
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color.gray)
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(typingAnimation ? 1.2 : 0.8)
+                        .animation(
+                            Animation.easeInOut(duration: 0.5)
+                                .repeatForever()
+                                .delay(Double(index) * 0.1),
+                            value: typingAnimation
+                        )
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.2))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .onAppear {
-                    typingAnimation = true
-                }
-                .onDisappear {
-                    typingAnimation = false
-                }
-                .accessibilityLabel("Someone is typing")
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.gray.opacity(0.2))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
             
             Spacer()
         }
-        .padding(.horizontal)
+        .onAppear {
+            typingAnimation = true
+        }
+    }
+}
+
+struct ConnectionStatusBar: View {
+    let status: ConnectionStatus
+    
+    var body: some View {
+        Group {
+            switch status {
+            case .connecting:
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Connecting...")
+                        .font(.caption)
+                }
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
+                .background(Color.orange.opacity(0.2))
+                
+            case .disconnected:
+                HStack {
+                    Image(systemName: "wifi.slash")
+                        .font(.caption)
+                    Text("No Connection")
+                        .font(.caption)
+                }
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.2))
+                
+            case .connected:
+                EmptyView()
+            }
+        }
     }
 }
 
 struct ChatView: View {
     @StateObject private var chatManager = ChatManager()
     @State private var messageText = ""
-    @State private var isTyping = false
     @State private var replyingTo: Message?
     @State private var showingImagePicker = false
+    @State private var isTyping = false
     @FocusState private var isInputFocused: Bool
     
     var body: some View {
         VStack(spacing: 0) {
-            // Connection status
-            if chatManager.connectionStatus != .connected {
-                HStack {
-                    Image(systemName: "wifi.slash")
-                        .foregroundColor(.orange)
-                    Text(statusText)
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                    Spacer()
+            ConnectionStatusBar(status: chatManager.connectionStatus)
+            
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(chatManager.messages) { message in
+                            MessageBubble(
+                                message: message,
+                                isFromCurrentUser: message.isFromCurrentUser,
+                                onReply: { msg in
+                                    replyingTo = msg
+                                    isInputFocused = true
+                                },
+                                onReact: { messageID, emoji in
+                                    chatManager.addReaction(to: messageID, emoji: emoji)
+                                }
+                            )
+                            .id(message.id)
+                        }
+                        
+                        if chatManager.isTyping.values.contains(true) {
+                            TypingIndicator()
+                                .id("typing-indicator")
+                        }
+                    }
+                    .padding()
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.1))
+                .onAppear {
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: chatManager.messages.count) { _ in
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: chatManager.isTyping) { _ in
+                    if chatManager.isTyping.values.contains(true) {
+                        scrollToBottom(proxy: proxy)
+                    }
+                }
             }
             
-            // Message list
-            messageList
-            
-            // Reply preview
             if let replyMessage = replyingTo {
                 ReplyPreview(originalMessage: replyMessage) {
                     replyingTo = nil
                 }
                 .padding(.horizontal)
-                .padding(.top, 8)
             }
             
-            // Typing indicator
-            TypingIndicator(typingUsers: chatManager.typingUsers)
-            
-            // Input bar
             inputBar
         }
         .navigationTitle("Chat")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {}) {
+                    Image(systemName: "person.2.fill")
+                        .foregroundColor(.blue)
+                }
+            }
+        }
         .onAppear {
             chatManager.connect()
         }
         .onDisappear {
             chatManager.disconnect()
         }
-        .onTapGesture {
-            isInputFocused = false
-        }
-    }
-    
-    private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(chatManager.messages) { message in
-                        MessageBubble(
-                            message: message,
-                            isFromCurrentUser: message.isFromCurrentUser,
-                            onReply: { replyingTo = $0 }
-                        )
-                        .id(message.id)
-                    }
-                    
-                    // Invisible anchor for scrolling
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(height: 1)
-                        .id("bottom")
-                }
-                .padding()
-            }
-            .onAppear {
-                scrollToBottom(proxy: proxy)
-            }
-            .onChange(of: chatManager.messages.count) { _ in
-                scrollToBottom(proxy: proxy)
-            }
-            .refreshable {
-                // Load more messages
-                await loadMoreMessages()
-            }
+        .sheet(isPresented: $showingImagePicker) {
+            ImagePicker()
         }
     }
     
     private var inputBar: some View {
         HStack(spacing: 12) {
-            Button(action: { showingImagePicker = true }) {
-                Image(systemName: "plus")
+            Button(action: {
+                showingImagePicker = true
+            }) {
+                Image(systemName: "plus.circle.fill")
                     .font(.title2)
                     .foregroundColor(.blue)
             }
-            .accessibilityLabel("Add attachment")
             
-            TextField("Type a message...", text: $messageText, axis: .vertical)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .lineLimit(1...5)
-                .focused($isInputFocused)
-                .onChange(of: messageText) { newValue in
-                    if !newValue.isEmpty && !isTyping {
-                        isTyping = true
-                        chatManager.sendTypingIndicator(isTyping: true)
-                    } else if newValue.isEmpty && isTyping {
-                        isTyping = false
-                        chatManager.sendTypingIndicator(isTyping: false)
+            HStack {
+                TextField("Type a message...", text: $messageText, axis: .vertical)
+                    .focused($isInputFocused)
+                    .lineLimit(1...5)
+                    .onChange(of: messageText) { newValue in
+                        if !newValue.isEmpty && !isTyping {
+                            isTyping = true
+                            chatManager.sendTypingIndicator(isTyping: true)
+                        } else if newValue.isEmpty && isTyping {
+                            isTyping = false
+                            chatManager.sendTypingIndicator(isTyping: false)
+                        }
                     }
+                
+                Button(action: {
+                    showingImagePicker = true
+                }) {
+                    Image(systemName: "camera.fill")
+                        .font(.title3)
+                        .foregroundColor(.gray)
                 }
-                .onSubmit {
-                    if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        sendMessage()
-                    }
-                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.gray.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
             
             Button(action: sendMessage) {
                 Image(systemName: "paperplane.fill")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.gray : Color.blue)
+                    .clipShape(Circle())
             }
             .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel("Send message")
         }
         .padding()
         .background(Color(UIColor.systemBackground))
@@ -498,80 +594,67 @@ struct ChatView: View {
                 .foregroundColor(Color.gray.opacity(0.3)),
             alignment: .top
         )
-        .sheet(isPresented: $showingImagePicker) {
-            ImagePicker { _ in
-                // Handle image selection
-            }
-        }
-    }
-    
-    private var statusText: String {
-        switch chatManager.connectionStatus {
-        case .connecting:
-            return "Connecting..."
-        case .disconnected:
-            return "Offline"
-        case .connected:
-            return "Connected"
-        }
     }
     
     private func sendMessage() {
-        let content = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return }
+        let trimmedText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
         
-        chatManager.sendMessage(content, replyToID: replyingTo?.id)
+        let message = Message(
+            content: trimmedText,
+            senderID: "current_user",
+            senderName: "You",
+            replyToID: replyingTo?.id
+        )
         
+        chatManager.sendMessage(message)
         messageText = ""
         replyingTo = nil
         isTyping = false
-        chatManager.sendTypingIndicator(isTyping: false)
     }
     
     private func scrollToBottom(proxy: ScrollViewReader) {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            proxy.scrollTo("bottom", anchor: .bottom)
+        if let lastMessage = chatManager.messages.last {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
+        } else if chatManager.isTyping.values.contains(true) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo("typing-indicator", anchor: .bottom)
+            }
         }
-    }
-    
-    private func loadMoreMessages() async {
-        // Simulate loading more messages
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
     }
 }
 
-struct ImagePicker: UIViewControllerRepresentable {
-    let onImageSelected: (UIImage) -> Void
+struct ImagePicker: View {
+    @Environment(\.presentationMode) var presentationMode
     
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.delegate = context.coordinator
-        picker.sourceType = .photoLibrary
-        return picker
-    }
-    
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onImageSelected: onImageSelected)
-    }
-    
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onImageSelected: (UIImage) -> Void
-        
-        init(onImageSelected: @escaping (UIImage) -> Void) {
-            self.onImageSelected = onImageSelected
-        }
-        
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                onImageSelected(image)
+    var body: some View {
+        NavigationView {
+            VStack {
+                Image(systemName: "photo")
+                    .font(.system(size: 64))
+                    .foregroundColor(.gray)
+                
+                Text("Image Picker")
+                    .font(.title2)
+                    .padding()
+                
+                Text("This would integrate with PHPickerViewController or UIImagePickerController")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding()
             }
-            picker.dismiss(animated: true)
-        }
-        
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
+            .navigationTitle("Select Image")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                }
+            }
         }
     }
 }
