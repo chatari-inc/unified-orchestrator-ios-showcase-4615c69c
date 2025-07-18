@@ -20,7 +20,7 @@ struct MapView: View {
     @State private var mapType: MKMapType = .standard
     @State private var showsTraffic = false
     @State private var showsBuildings = true
-    @State private var showingRouteDetails = false
+    @State private var showingRouteInfo = false
     
     var body: some View {
         ZStack {
@@ -30,6 +30,7 @@ struct MapView: View {
                 selectedAnnotation: $selectedAnnotation,
                 mapType: $mapType,
                 showsTraffic: $showsTraffic,
+                showsBuildings: $showsBuildings,
                 currentRoute: directionsManager.currentRoute
             )
             .ignoresSafeArea()
@@ -43,62 +44,63 @@ struct MapView: View {
                         onSearch: { query in
                             searchManager.search(for: query, in: region)
                         },
-                        onSelectResult: { mapItem in
-                            selectSearchResult(mapItem)
+                        onSelectResult: { item in
+                            selectSearchResult(item)
                         }
                     )
-                    .background(Color(.systemBackground))
+                    .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(radius: 8)
-                    .padding()
+                    .padding(.horizontal)
                 }
                 
                 Spacer()
                 
+                if showingRouteInfo, let route = directionsManager.currentRoute {
+                    RouteInfoView(
+                        route: route,
+                        onClose: {
+                            showingRouteInfo = false
+                            directionsManager.currentRoute = nil
+                        }
+                    )
+                    .padding()
+                }
+            }
+            
+            VStack {
                 HStack {
-                    VStack(spacing: 12) {
-                        Button(action: {
-                            showingSearch.toggle()
-                        }) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                        .accessibilityLabel("Search")
-                        .mapControlStyle()
-                        
-                        Button(action: goToCurrentLocation) {
-                            Image(systemName: "location.fill")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                        .accessibilityLabel("Current Location")
-                        .mapControlStyle()
-                        
-                        Menu {
-                            Button("Standard") { mapType = .standard }
-                            Button("Satellite") { mapType = .satellite }
-                            Button("Hybrid") { mapType = .hybrid }
-                        } label: {
-                            Image(systemName: "map")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                        .accessibilityLabel("Map Type")
-                        .mapControlStyle()
-                        
-                        Button(action: { showsTraffic.toggle() }) {
-                            Image(systemName: showsTraffic ? "car.fill" : "car")
-                                .font(.title2)
-                                .foregroundColor(showsTraffic ? .red : .blue)
-                        }
-                        .accessibilityLabel("Traffic")
-                        .mapControlStyle()
+                    Button(action: {
+                        showingSearch.toggle()
+                    }) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.title2)
+                            .foregroundColor(.blue)
                     }
+                    .padding()
+                    .background(Color.white)
+                    .clipShape(Circle())
+                    .shadow(radius: 4)
                     
                     Spacer()
                 }
                 .padding()
+                
+                Spacer()
+                
+                HStack {
+                    Spacer()
+                    
+                    MapControls(
+                        mapType: $mapType,
+                        showsTraffic: $showsTraffic,
+                        showsBuildings: $showsBuildings,
+                        onLocationTap: {
+                            goToCurrentLocation()
+                        }
+                    )
+                    .padding()
+                }
             }
             
             if let annotation = selectedAnnotation {
@@ -118,49 +120,48 @@ struct MapView: View {
                 }
             }
             
-            if let route = directionsManager.currentRoute, showingRouteDetails {
-                VStack {
-                    RouteDetailsView(
-                        route: route,
-                        onClose: {
-                            showingRouteDetails = false
-                        }
-                    )
+            if directionsManager.isCalculatingRoute {
+                ProgressView("Calculating route...")
                     .padding()
-                    
-                    Spacer()
-                }
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(radius: 8)
             }
         }
         .onAppear {
             locationManager.requestLocation()
-            addSampleAnnotations()
+            setupDefaultAnnotations()
         }
         .onChange(of: locationManager.location) { location in
             if let location = location {
-                region = MKCoordinateRegion(
-                    center: location.coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                )
+                region.center = location.coordinate
             }
         }
         .onChange(of: directionsManager.currentRoute) { route in
             if route != nil {
-                showingRouteDetails = true
+                showingRouteInfo = true
             }
         }
+        .accessibilityLabel("Interactive map view")
     }
     
     private func goToCurrentLocation() {
-        locationManager.startUpdatingLocation()
+        if let location = locationManager.location {
+            withAnimation(.easeInOut(duration: 1.0)) {
+                region.center = location.coordinate
+                region.span = MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            }
+        } else {
+            locationManager.requestLocation()
+        }
     }
     
-    private func selectSearchResult(_ mapItem: MKMapItem) {
+    private func selectSearchResult(_ item: MKMapItem) {
         let annotation = MapAnnotation(
             id: UUID(),
-            title: mapItem.name ?? "Unknown",
-            subtitle: mapItem.placemark.title,
-            coordinate: mapItem.placemark.coordinate,
+            title: item.name ?? "Unknown",
+            subtitle: item.placemark.title,
+            coordinate: item.placemark.coordinate,
             type: .pin,
             color: .red,
             userData: nil
@@ -169,55 +170,56 @@ struct MapView: View {
         annotations.append(annotation)
         selectedAnnotation = annotation
         
-        region = MKCoordinateRegion(
-            center: mapItem.placemark.coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        )
+        withAnimation(.easeInOut(duration: 1.0)) {
+            region.center = item.placemark.coordinate
+        }
         
         showingSearch = false
     }
     
     private func getDirections(to annotation: MapAnnotation) {
-        guard let currentLocation = locationManager.location else { return }
+        guard let userLocation = locationManager.location else {
+            return
+        }
         
         directionsManager.calculateRoute(
-            from: currentLocation.coordinate,
+            from: userLocation.coordinate,
             to: annotation.coordinate
         )
     }
     
-    private func addSampleAnnotations() {
-        let sampleAnnotations = [
+    private func setupDefaultAnnotations() {
+        let defaultAnnotations = [
             MapAnnotation(
                 id: UUID(),
                 title: "Golden Gate Bridge",
                 subtitle: "San Francisco Landmark",
                 coordinate: CLLocationCoordinate2D(latitude: 37.8199, longitude: -122.4783),
                 type: .pin,
-                color: .orange,
+                color: .red,
                 userData: nil
             ),
             MapAnnotation(
                 id: UUID(),
-                title: "Alcatraz Island",
-                subtitle: "Historic Prison",
-                coordinate: CLLocationCoordinate2D(latitude: 37.8267, longitude: -122.4233),
+                title: "Lombard Street",
+                subtitle: "Most Crooked Street",
+                coordinate: CLLocationCoordinate2D(latitude: 37.8021, longitude: -122.4187),
                 type: .pin,
                 color: .blue,
                 userData: nil
             ),
             MapAnnotation(
                 id: UUID(),
-                title: "Fisherman's Wharf",
+                title: "Pier 39",
                 subtitle: "Tourist Attraction",
-                coordinate: CLLocationCoordinate2D(latitude: 37.8080, longitude: -122.4177),
+                coordinate: CLLocationCoordinate2D(latitude: 37.8087, longitude: -122.4098),
                 type: .restaurant,
                 color: .green,
                 userData: nil
             )
         ]
         
-        annotations = sampleAnnotations
+        annotations = defaultAnnotations
     }
 }
 
@@ -227,6 +229,7 @@ struct MapContainer: UIViewRepresentable {
     @Binding var selectedAnnotation: MapAnnotation?
     @Binding var mapType: MKMapType
     @Binding var showsTraffic: Bool
+    @Binding var showsBuildings: Bool
     let currentRoute: RouteInfo?
     
     func makeUIView(context: Context) -> MKMapView {
@@ -237,50 +240,34 @@ struct MapContainer: UIViewRepresentable {
         mapView.isRotateEnabled = true
         mapView.isZoomEnabled = true
         mapView.isScrollEnabled = true
-        
-        let tapGesture = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(context.coordinator.handleTap)
-        )
-        mapView.addGestureRecognizer(tapGesture)
-        
+        mapView.isPitchEnabled = true
         return mapView
     }
     
     func updateUIView(_ mapView: MKMapView, context: Context) {
         mapView.mapType = mapType
         mapView.showsTraffic = showsTraffic
+        mapView.showsBuildings = showsBuildings
         
         if mapView.region.center.latitude != region.center.latitude ||
            mapView.region.center.longitude != region.center.longitude {
             mapView.setRegion(region, animated: true)
         }
         
-        updateAnnotations(mapView)
-        updateRoute(mapView)
-    }
-    
-    private func updateAnnotations(_ mapView: MKMapView) {
-        let currentAnnotations = mapView.annotations.compactMap { $0 as? CustomAnnotation }
-        let newAnnotations = annotations.map { CustomAnnotation(from: $0) }
-        
-        let annotationsToRemove = currentAnnotations.filter { current in
-            !newAnnotations.contains { $0.id == current.id }
+        let currentAnnotations = mapView.annotations.compactMap { $0 as? MKPointAnnotation }
+        let newAnnotations = annotations.map { annotation in
+            let mkAnnotation = MKPointAnnotation()
+            mkAnnotation.coordinate = annotation.coordinate
+            mkAnnotation.title = annotation.title
+            mkAnnotation.subtitle = annotation.subtitle
+            return mkAnnotation
         }
         
-        let annotationsToAdd = newAnnotations.filter { new in
-            !currentAnnotations.contains { $0.id == new.id }
-        }
-        
-        mapView.removeAnnotations(annotationsToRemove)
-        mapView.addAnnotations(annotationsToAdd)
-    }
-    
-    private func updateRoute(_ mapView: MKMapView) {
-        let currentOverlays = mapView.overlays
-        mapView.removeOverlays(currentOverlays)
+        mapView.removeAnnotations(currentAnnotations)
+        mapView.addAnnotations(newAnnotations)
         
         if let route = currentRoute {
+            mapView.removeOverlays(mapView.overlays)
             mapView.addOverlay(route.polyline)
         }
     }
@@ -296,57 +283,36 @@ struct MapContainer: UIViewRepresentable {
             self.parent = parent
         }
         
+        func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard let annotation = view.annotation as? MKPointAnnotation else { return }
+            
+            if let selectedAnnotation = parent.annotations.first(where: { mapAnnotation in
+                mapAnnotation.coordinate.latitude == annotation.coordinate.latitude &&
+                mapAnnotation.coordinate.longitude == annotation.coordinate.longitude
+            }) {
+                parent.selectedAnnotation = selectedAnnotation
+            }
+        }
+        
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             parent.region = mapView.region
-        }
-        
-        func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
-            guard let customAnnotation = view.annotation as? CustomAnnotation else { return }
-            
-            if let annotation = parent.annotations.first(where: { $0.id == customAnnotation.id }) {
-                parent.selectedAnnotation = annotation
-            }
-        }
-        
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let customAnnotation = annotation as? CustomAnnotation else { return nil }
-            
-            let identifier = "CustomAnnotation"
-            var view: MKAnnotationView
-            
-            if let dequeuedView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) {
-                dequeuedView.annotation = annotation
-                view = dequeuedView
-            } else {
-                view = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                view.canShowCallout = false
-            }
-            
-            view.image = customAnnotation.image
-            view.accessibilityLabel = customAnnotation.title
-            
-            return view
         }
         
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = .blue
+                renderer.strokeColor = .systemBlue
                 renderer.lineWidth = 4
                 return renderer
             }
             return MKOverlayRenderer()
-        }
-        
-        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
-            parent.selectedAnnotation = nil
         }
     }
 }
 
 struct MapSearchBar: View {
     @Binding var searchText: String
-    @Binding var searchResults: [MKMapItem]
+    let searchResults: [MKMapItem]
     let isSearching: Bool
     let onSearch: (String) -> Void
     let onSelectResult: (MKMapItem) -> Void
@@ -359,41 +325,50 @@ struct MapSearchBar: View {
                     .onSubmit {
                         onSearch(searchText)
                     }
-                    .accessibilityLabel("Search field")
+                    .accessibilityLabel("Search for places")
                 
-                Button(action: {
-                    onSearch(searchText)
-                }) {
-                    if isSearching {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Button(action: {
+                        onSearch(searchText)
+                    }) {
                         Image(systemName: "magnifyingglass")
+                            .foregroundColor(.blue)
                     }
+                    .accessibilityLabel("Search")
                 }
-                .accessibilityLabel("Search")
             }
             .padding()
             
             if !searchResults.isEmpty {
-                List(searchResults, id: \.self) { item in
+                searchResultsList
+            }
+        }
+    }
+    
+    private var searchResultsList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(searchResults.prefix(5), id: \.self) { item in
                     SearchResultRow(item: item) {
                         onSelectResult(item)
                     }
                 }
-                .frame(maxHeight: 200)
-                .listStyle(PlainListStyle())
             }
+            .padding(.horizontal)
         }
+        .frame(maxHeight: 200)
     }
 }
 
 struct SearchResultRow: View {
     let item: MKMapItem
-    let onSelect: () -> Void
+    let onTap: () -> Void
     
     var body: some View {
-        Button(action: onSelect) {
+        Button(action: onTap) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name ?? "Unknown")
                     .font(.headline)
@@ -405,8 +380,70 @@ struct SearchResultRow: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
         }
-        .accessibilityLabel(item.name ?? "Unknown location")
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("\(item.name ?? "Unknown location")")
+    }
+}
+
+struct MapControls: View {
+    @Binding var mapType: MKMapType
+    @Binding var showsTraffic: Bool
+    @Binding var showsBuildings: Bool
+    let onLocationTap: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Button(action: onLocationTap) {
+                Image(systemName: "location.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            .padding()
+            .background(Color.white)
+            .clipShape(Circle())
+            .shadow(radius: 4)
+            .accessibilityLabel("Go to current location")
+            
+            Menu {
+                Button("Standard") { mapType = .standard }
+                Button("Satellite") { mapType = .satellite }
+                Button("Hybrid") { mapType = .hybrid }
+            } label: {
+                Image(systemName: "map")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            .padding()
+            .background(Color.white)
+            .clipShape(Circle())
+            .shadow(radius: 4)
+            .accessibilityLabel("Map type")
+            
+            Button(action: { showsTraffic.toggle() }) {
+                Image(systemName: showsTraffic ? "car.fill" : "car")
+                    .font(.title2)
+                    .foregroundColor(showsTraffic ? .red : .blue)
+            }
+            .padding()
+            .background(Color.white)
+            .clipShape(Circle())
+            .shadow(radius: 4)
+            .accessibilityLabel("Toggle traffic")
+            
+            Button(action: { showsBuildings.toggle() }) {
+                Image(systemName: showsBuildings ? "building.fill" : "building")
+                    .font(.title2)
+                    .foregroundColor(showsBuildings ? .green : .blue)
+            }
+            .padding()
+            .background(Color.white)
+            .clipShape(Circle())
+            .shadow(radius: 4)
+            .accessibilityLabel("Toggle buildings")
+        }
     }
 }
 
@@ -416,7 +453,7 @@ struct MapAnnotationCallout: View {
     let onClose: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(annotation.title)
@@ -425,7 +462,7 @@ struct MapAnnotationCallout: View {
                     
                     if let subtitle = annotation.subtitle {
                         Text(subtitle)
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -445,32 +482,46 @@ struct MapAnnotationCallout: View {
                     onGetDirections()
                 }
                 .buttonStyle(.borderedProminent)
-                .accessibilityLabel("Get Directions")
+                .accessibilityLabel("Get directions to \(annotation.title)")
                 
                 Button("More Info") {
-                    // Future implementation
+                    // Show more details
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("More Information")
+                .accessibilityLabel("More information about \(annotation.title)")
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 8)
     }
 }
 
-struct RouteDetailsView: View {
+struct RouteInfoView: View {
     let route: RouteInfo
     let onClose: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Route Details")
-                    .font(.headline)
-                    .foregroundColor(.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Route Information")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text(route.formattedDistance)
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                        
+                        Text("•")
+                            .foregroundColor(.secondary)
+                        
+                        Text(route.formattedTime)
+                            .font(.subheadline)
+                            .foregroundColor(.green)
+                    }
+                }
                 
                 Spacer()
                 
@@ -479,70 +530,36 @@ struct RouteDetailsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .accessibilityLabel("Close")
-            }
-            
-            HStack(spacing: 24) {
-                VStack(alignment: .leading) {
-                    Text("Distance")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(route.formattedDistance)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                }
-                
-                VStack(alignment: .leading) {
-                    Text("Travel Time")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(route.formattedTime)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                }
+                .accessibilityLabel("Close route information")
             }
             
             if !route.instructions.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Turn-by-Turn Directions")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                    
-                    ForEach(Array(route.instructions.prefix(3).enumerated()), id: \.offset) { index, instruction in
-                        HStack {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 8, height: 8)
-                            
-                            Text(instruction)
-                                .font(.caption)
-                                .foregroundColor(.primary)
-                        }
-                    }
-                    
-                    if route.instructions.count > 3 {
-                        Text("... and \(route.instructions.count - 3) more steps")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Turn-by-turn directions:")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                        
+                        ForEach(Array(route.instructions.prefix(3).enumerated()), id: \.offset) { index, instruction in
+                            HStack {
+                                Text("\(index + 1).")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Text(instruction)
+                                    .font(.caption)
+                                    .lineLimit(2)
+                            }
+                        }
                     }
                 }
+                .frame(maxHeight: 80)
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 8)
-    }
-}
-
-extension View {
-    func mapControlStyle() -> some View {
-        self
-            .padding()
-            .background(Color(.systemBackground))
-            .clipShape(Circle())
-            .shadow(radius: 4)
     }
 }
 
@@ -563,47 +580,44 @@ struct MapAnnotation: Identifiable, Codable {
         case school
         case custom
     }
-}
-
-extension CLLocationCoordinate2D: Codable {
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(latitude, forKey: .latitude)
-        try container.encode(longitude, forKey: .longitude)
-    }
-    
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let latitude = try container.decode(Double.self, forKey: .latitude)
-        let longitude = try container.decode(Double.self, forKey: .longitude)
-        self.init(latitude: latitude, longitude: longitude)
-    }
     
     enum CodingKeys: String, CodingKey {
-        case latitude
-        case longitude
-    }
-}
-
-extension Color: Codable {
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(description)
+        case id, title, subtitle, type, userData
+        case latitude, longitude
     }
     
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let description = try container.decode(String.self)
-        
-        switch description {
-        case "red": self = .red
-        case "blue": self = .blue
-        case "green": self = .green
-        case "orange": self = .orange
-        case "purple": self = .purple
-        case "yellow": self = .yellow
-        default: self = .blue
-        }
+    init(id: UUID, title: String, subtitle: String?, coordinate: CLLocationCoordinate2D, type: AnnotationType, color: Color, userData: [String: String]?) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.coordinate = coordinate
+        self.type = type
+        self.color = color
+        self.userData = userData
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle)
+        let latitude = try container.decode(Double.self, forKey: .latitude)
+        let longitude = try container.decode(Double.self, forKey: .longitude)
+        coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        type = try container.decode(AnnotationType.self, forKey: .type)
+        color = .blue
+        userData = try container.decodeIfPresent([String: String].self, forKey: .userData)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(subtitle, forKey: .subtitle)
+        try container.encode(coordinate.latitude, forKey: .latitude)
+        try container.encode(coordinate.longitude, forKey: .longitude)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(userData, forKey: .userData)
     }
 }
 
@@ -615,9 +629,17 @@ struct RouteInfo: Identifiable {
     let instructions: [String]
     let polyline: MKPolyline
     
+    init(id: UUID, route: MKRoute, distance: CLLocationDistance, expectedTravelTime: TimeInterval, instructions: [String], polyline: MKPolyline) {
+        self.id = id
+        self.route = route
+        self.distance = distance
+        self.expectedTravelTime = expectedTravelTime
+        self.instructions = instructions
+        self.polyline = polyline
+    }
+    
     var formattedDistance: String {
         let formatter = MKDistanceFormatter()
-        formatter.unitStyle = .abbreviated
         return formatter.string(fromDistance: distance)
     }
     
@@ -625,55 +647,7 @@ struct RouteInfo: Identifiable {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute]
         formatter.unitsStyle = .abbreviated
-        return formatter.string(from: expectedTravelTime) ?? "N/A"
-    }
-}
-
-class CustomAnnotation: NSObject, MKAnnotation {
-    let id: UUID
-    let coordinate: CLLocationCoordinate2D
-    let title: String?
-    let subtitle: String?
-    let type: MapAnnotation.AnnotationType
-    let color: Color
-    
-    init(from mapAnnotation: MapAnnotation) {
-        self.id = mapAnnotation.id
-        self.coordinate = mapAnnotation.coordinate
-        self.title = mapAnnotation.title
-        self.subtitle = mapAnnotation.subtitle
-        self.type = mapAnnotation.type
-        self.color = mapAnnotation.color
-        super.init()
-    }
-    
-    var image: UIImage? {
-        let systemName: String
-        let tintColor: UIColor
-        
-        switch type {
-        case .pin:
-            systemName = "mappin.circle.fill"
-            tintColor = UIColor(color)
-        case .restaurant:
-            systemName = "fork.knife.circle.fill"
-            tintColor = .systemOrange
-        case .gasStation:
-            systemName = "fuelpump.circle.fill"
-            tintColor = .systemBlue
-        case .hospital:
-            systemName = "cross.circle.fill"
-            tintColor = .systemRed
-        case .school:
-            systemName = "building.2.crop.circle.fill"
-            tintColor = .systemGreen
-        case .custom:
-            systemName = "mappin.circle.fill"
-            tintColor = UIColor(color)
-        }
-        
-        let configuration = UIImage.SymbolConfiguration(pointSize: 30, weight: .medium)
-        return UIImage(systemName: systemName, withConfiguration: configuration)?.withTintColor(tintColor, renderingMode: .alwaysOriginal)
+        return formatter.string(from: expectedTravelTime) ?? "Unknown"
     }
 }
 
@@ -692,7 +666,16 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func requestLocation() {
-        locationManager.requestWhenInUseAuthorization()
+        switch authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.startUpdatingLocation()
+        case .denied, .restricted:
+            locationError = NSError(domain: "LocationError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Location access denied"])
+        @unknown default:
+            break
+        }
     }
     
     func startUpdatingLocation() {
@@ -717,9 +700,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
-        
         if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
-            startUpdatingLocation()
+            locationManager.startUpdatingLocation()
         }
     }
 }
@@ -796,16 +778,8 @@ class DirectionsManager: ObservableObject {
                 }
                 
                 guard let route = response?.routes.first else {
-                    self?.routeError = NSError(
-                        domain: "RouteError",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "No route found"]
-                    )
+                    self?.routeError = NSError(domain: "RouteError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No route found"])
                     return
-                }
-                
-                let instructions = route.steps.compactMap { step in
-                    step.instructions.isEmpty ? nil : step.instructions
                 }
                 
                 self?.currentRoute = RouteInfo(
@@ -813,7 +787,9 @@ class DirectionsManager: ObservableObject {
                     route: route,
                     distance: route.distance,
                     expectedTravelTime: route.expectedTravelTime,
-                    instructions: instructions,
+                    instructions: route.steps.compactMap { step in
+                        step.instructions.isEmpty ? nil : step.instructions
+                    },
                     polyline: route.polyline
                 )
             }
@@ -823,5 +799,34 @@ class DirectionsManager: ObservableObject {
     func clearRoute() {
         currentRoute = nil
         routeError = nil
+    }
+}
+
+extension Color: Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let colorName = try container.decode(String.self)
+        
+        switch colorName {
+        case "red":
+            self = .red
+        case "blue":
+            self = .blue
+        case "green":
+            self = .green
+        case "yellow":
+            self = .yellow
+        case "orange":
+            self = .orange
+        case "purple":
+            self = .purple
+        default:
+            self = .blue
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode("blue")
     }
 }
